@@ -7,7 +7,7 @@ import numpy as np
 
 import torch
 
-from gwpy.timeseries import TimeSeriesDict
+from gwpy.timeseries import TimeSeries, TimeSeriesDict
 
 from .signal import bandpass
 
@@ -29,15 +29,20 @@ class TimeSeriesDataset:
         if isinstance(channels, str):
             channels = open(channels).read().splitlines()
         target_channel = channels[0]
-        
+
+        channels, fake_chans = self.categorize_channels (channels)
+
         # get data and resample
         data = TimeSeriesDict.get(channels, t0, t0 + duration, nproc=nproc,
                                   allow_tape=True)
+
+        data = self.add_fake_sinusoids (data, fake_chans, t0, duration, fs )
+
         data = data.resample(fs)
-        
+
         # sorted by channel name
         data = OrderedDict(sorted(data.items()))
-        
+
         # reset attributes 
         self.data = []
         self.channels = []
@@ -48,8 +53,35 @@ class TimeSeriesDataset:
         self.channels = np.stack(self.channels)
         self.t0 = t0
         self.fs = fs
-        self.target_idx = np.where(self.channels == target_channel)[0][0]
-        
+        self.target_idx = np.where(self.channels == target_channel)[0][0]    
+
+
+    def categorize_channels (self, channels):
+        real_chans = []
+        fake_chans = []
+        for i in range(len(channels)):
+            channel = channels[i]
+            if 'FAKE_SINE_FREQ' in channel:
+                fake_chans.append(channel)
+            else:
+                if channel != '':
+                    real_chans.append(channel)
+
+        return real_chans, fake_chans
+
+
+    def add_fake_sinusoids (self, data, fake_chans, t0, duration, fs ):
+        """ The dict 'data' is modified with fake timeseries """
+
+        for chan in fake_chans:
+            f0 = float(chan.split('_')[-1].split('HZ')[0].replace('POINT', '.'))
+            time = np.linspace(t0, t0 + duration, int(duration*fs))
+            sine_2pi_ft = np.sin(2*np.pi*f0*time)
+            fake_ts = TimeSeries(sine_2pi_ft, t0=t0, sample_rate=fs, name=chan, unit="ct", channel=chan)
+            data[chan] = fake_ts
+        return data
+
+    
     def read(self, fname, channels, group=None):
         """ Read data from HDF5 format """
         # if channels is a file
@@ -222,4 +254,4 @@ class TimeSeriesSegmentDataset(TimeSeriesDataset):
         aux = torch.Tensor(aux)
         
         return aux, target
-    
+
